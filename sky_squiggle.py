@@ -103,6 +103,16 @@ FILLER_PHRASES = [
 
 GUESS_DISPLAY_SECONDS = 5  # how long the guess banner stays on screen
 
+# ── Cartoon UI constants ──────────────────────────────────────────────────
+SHADOW_OFFSET = 6       # hard-shadow pixel offset (right & down)
+BORDER_THICK  = 3       # thick black border for cartoon look
+CORNER_RADIUS = 15      # rounded-corner radius
+BTN_W         = 135     # button width
+BTN_H         = 55      # button height
+BTN_GAP       = 14      # gap between buttons
+BTN_TOP       = 18      # top margin
+BTN_LEFT      = 18      # left margin
+
 
 def _ensure_model():
     """Download the hand-landmarker model if it is not already present."""
@@ -163,9 +173,6 @@ class SkySquiggle:
         self.current_color_name = "Red"
 
         # ── UI button setup ───────────────────────────────────────────
-        self.button_width = 150
-        self.button_height = 60
-        self.button_margin = 20
         self.buttons = {}
         self._setup_buttons()
 
@@ -262,18 +269,16 @@ class SkySquiggle:
     # Button setup
     # ─────────────────────────────────────────────────────────────────
     def _setup_buttons(self):
-        """Create the top-row colour / clear buttons."""
-        x_offset = self.button_margin
-        y_offset = self.button_margin
+        """Create the top-row colour / clear buttons with cartoon layout."""
+        x = BTN_LEFT
+        y = BTN_TOP
         for color_name, color_rgb in self.colors.items():
             self.buttons[color_name] = {
-                "pos": (x_offset, y_offset,
-                        x_offset + self.button_width,
-                        y_offset + self.button_height),
+                "pos": (x, y, x + BTN_W, y + BTN_H),
                 "color": color_rgb,
                 "name": color_name,
             }
-            x_offset += self.button_width + self.button_margin
+            x += BTN_W + BTN_GAP
 
     # ─────────────────────────────────────────────────────────────────
     # Finger detection
@@ -302,6 +307,84 @@ class SkySquiggle:
         return None
 
     # ─────────────────────────────────────────────────────────────────
+    # Cartoon drawing primitives
+    # ─────────────────────────────────────────────────────────────────
+    @staticmethod
+    def _rounded_rect(frame, x1, y1, x2, y2, r, color, thickness=-1):
+        """Draw a rounded rectangle (filled if thickness == -1)."""
+        r = max(0, min(r, (x2 - x1) // 2, (y2 - y1) // 2))
+        if r == 0:
+            cv2.rectangle(frame, (x1, y1), (x2, y2), color, thickness)
+            return
+        if thickness == -1:
+            # filled: two rects + four corner circles
+            cv2.rectangle(frame, (x1 + r, y1), (x2 - r, y2), color, -1)
+            cv2.rectangle(frame, (x1, y1 + r), (x2, y2 - r), color, -1)
+            cv2.circle(frame, (x1 + r, y1 + r), r, color, -1)
+            cv2.circle(frame, (x2 - r, y1 + r), r, color, -1)
+            cv2.circle(frame, (x1 + r, y2 - r), r, color, -1)
+            cv2.circle(frame, (x2 - r, y2 - r), r, color, -1)
+        else:
+            # outline: four lines + four arc corners
+            cv2.line(frame, (x1 + r, y1), (x2 - r, y1), color, thickness)
+            cv2.line(frame, (x1 + r, y2), (x2 - r, y2), color, thickness)
+            cv2.line(frame, (x1, y1 + r), (x1, y2 - r), color, thickness)
+            cv2.line(frame, (x2, y1 + r), (x2, y2 - r), color, thickness)
+            cv2.ellipse(frame, (x1 + r, y1 + r), (r, r), 180, 0, 90, color, thickness)
+            cv2.ellipse(frame, (x2 - r, y1 + r), (r, r), 270, 0, 90, color, thickness)
+            cv2.ellipse(frame, (x1 + r, y2 - r), (r, r), 90, 0, 90, color, thickness)
+            cv2.ellipse(frame, (x2 - r, y2 - r), (r, r), 0, 0, 90, color, thickness)
+
+    # ─────────────────────────────────────────────────────────────────
+    # Cartoon button renderer
+    # ─────────────────────────────────────────────────────────────────
+    def _draw_cartoon_button(self, frame, x1, y1, x2, y2,
+                             fill_color, label, is_active=False):
+        """Render one cartoon button with shadow, fill, border, label."""
+        r = CORNER_RADIUS
+        so = SHADOW_OFFSET
+        bt = BORDER_THICK
+
+        if is_active:
+            # ── "Popped" active state: white glow halo ───────────────
+            glow = 6
+            self._rounded_rect(frame,
+                                x1 - glow, y1 - glow, x2 + glow, y2 + glow,
+                                r + 4, (255, 255, 255), -1)
+            # Slight upward shadow to feel "raised"
+            self._rounded_rect(frame,
+                                x1 - 2, y1 - 3, x2 - 2, y2 - 3,
+                                r, (180, 180, 180), -1)
+        else:
+            # ── Hard offset shadow (solid black, bottom-right) ───────
+            self._rounded_rect(frame,
+                                x1 + so, y1 + so, x2 + so, y2 + so,
+                                r, (0, 0, 0), -1)
+
+        # ── Fill ─────────────────────────────────────────────────────
+        self._rounded_rect(frame, x1, y1, x2, y2, r, fill_color, -1)
+
+        # ── Inner highlight stripe (top) for "3D" pop ────────────────
+        hi_color = tuple(min(255, c + 60) for c in fill_color)
+        self._rounded_rect(frame, x1 + 4, y1 + 4, x2 - 4, y1 + 14,
+                            r // 2, hi_color, -1)
+
+        # ── Thick black border ───────────────────────────────────────
+        self._rounded_rect(frame, x1, y1, x2, y2, r, (0, 0, 0), bt)
+
+        # ── Label centred ────────────────────────────────────────────
+        text_color = (0, 0, 0) if label in ("Yellow", "White", "Green") else (255, 255, 255)
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        scale = 0.6
+        thick = 2
+        (tw, th), _ = cv2.getTextSize(label, font, scale, thick)
+        tx = x1 + (x2 - x1 - tw) // 2
+        ty = y1 + (y2 - y1 + th) // 2 + 2
+        # text shadow
+        cv2.putText(frame, label, (tx + 1, ty + 1), font, scale, (0, 0, 0), thick + 1)
+        cv2.putText(frame, label, (tx, ty), font, scale, text_color, thick)
+
+    # ─────────────────────────────────────────────────────────────────
     # Drawing helpers
     # ─────────────────────────────────────────────────────────────────
     @staticmethod
@@ -314,120 +397,169 @@ class SkySquiggle:
             cv2.circle(frame, (px, py), 4, (255, 0, 128), -1)
 
     def _draw_ui(self, frame):
-        """Render the colour-palette buttons on the frame."""
+        """Render the cartoon-style colour-palette buttons."""
         for name, info in self.buttons.items():
             x1, y1, x2, y2 = info["pos"]
-            color = info["color"]
-            cv2.rectangle(frame, (x1, y1), (x2, y2), color, -1)
-            border_color = (255, 255, 255) if name == self.current_color_name else (100, 100, 100)
-            border_thick = 4 if name == self.current_color_name else 2
-            cv2.rectangle(frame, (x1, y1), (x2, y2), border_color, border_thick)
-            text_color = (0, 0, 0) if name in ("Yellow", "White") else (255, 255, 255)
-            cv2.putText(frame, name, (x1 + 10, y1 + 40),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, text_color, 2)
+            fill = info["color"]
+            # Darken the "Clear" button fill to dark-grey
+            if name == "Clear":
+                fill = (50, 50, 50)
+            active = (name == self.current_color_name and name != "Clear")
+            self._draw_cartoon_button(frame, x1, y1, x2, y2,
+                                       fill, name, is_active=active)
 
     def _draw_cursor(self, frame, x, y, mode="hover"):
-        """Show cursor at the fingertip."""
+        """Cartoon-style cursor at the fingertip."""
         if mode == "drawing":
-            cv2.circle(frame, (x, y), self.brush_thickness + 5, self.current_color, -1)
-            cv2.circle(frame, (x, y), self.brush_thickness + 7, (255, 255, 255), 2)
+            # Filled brush dot + thick cartoon outline
+            cv2.circle(frame, (x, y), self.brush_thickness + 6,
+                       (0, 0, 0), 3)                           # black outline
+            cv2.circle(frame, (x, y), self.brush_thickness + 4,
+                       self.current_color, -1)                  # colour fill
+            # Small white highlight
+            cv2.circle(frame, (x - 2, y - 2), 3, (255, 255, 255), -1)
         else:
-            cv2.circle(frame, (x, y), 15, (255, 255, 0), 2)
+            # Cross-hair ring
+            cv2.circle(frame, (x, y), 16, (0, 0, 0), 3)
+            cv2.circle(frame, (x, y), 14, (255, 255, 0), 2)
+            cv2.line(frame, (x - 20, y), (x + 20, y), (0, 0, 0), 1)
+            cv2.line(frame, (x, y - 20), (x, y + 20), (0, 0, 0), 1)
             cv2.circle(frame, (x, y), 3, (255, 255, 0), -1)
 
     # ─────────────────────────────────────────────────────────────────
-    # HUD with pill containers + pulsing overlay + guess banner
+    # Cartoon thought bubble (replaces fullscreen purple overlay)
     # ─────────────────────────────────────────────────────────────────
-    @staticmethod
-    def _draw_pill(frame, x, y, w, h, alpha=0.55):
-        """Draw a semi-transparent rounded-rect pill background."""
-        overlay = frame.copy()
-        radius = h // 2
-        # Rectangle body
-        cv2.rectangle(overlay, (x + radius, y), (x + w - radius, y + h), (0, 0, 0), -1)
-        # Left cap
-        cv2.circle(overlay, (x + radius, y + radius), radius, (0, 0, 0), -1)
-        # Right cap
-        cv2.circle(overlay, (x + w - radius, y + radius), radius, (0, 0, 0), -1)
-        cv2.addWeighted(overlay, alpha, frame, 1 - alpha, 0, frame)
+    def _draw_thought_bubble(self, frame):
+        """Render a cartoon thought bubble with animated progress bar."""
+        now = time.time()
+        bw, bh = 300, 80
+        bx = self.frame_width - bw - 24
+        by = self.frame_height - bh - 90
 
+        # ── Shadow ───────────────────────────────────────────────────
+        self._rounded_rect(frame,
+                            bx + SHADOW_OFFSET, by + SHADOW_OFFSET,
+                            bx + bw + SHADOW_OFFSET, by + bh + SHADOW_OFFSET,
+                            22, (0, 0, 0), -1)
+        # ── White bubble ─────────────────────────────────────────────
+        self._rounded_rect(frame, bx, by, bx + bw, by + bh,
+                            22, (255, 255, 255), -1)
+        self._rounded_rect(frame, bx, by, bx + bw, by + bh,
+                            22, (0, 0, 0), BORDER_THICK)
+
+        # ── Small trailing thought circles ───────────────────────────
+        cx, cy = bx - 6, by + bh + 4
+        for radius in (12, 7, 4):
+            # shadow
+            cv2.circle(frame, (cx + 3, cy + 3), radius, (0, 0, 0), -1)
+            cv2.circle(frame, (cx, cy), radius, (255, 255, 255), -1)
+            cv2.circle(frame, (cx, cy), radius, (0, 0, 0), 2)
+            cx -= radius + 6
+            cy += radius + 2
+
+        # ── Animated "Thinking…" text ────────────────────────────────
+        dots = "." * (int(now * 2) % 4)
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        cv2.putText(frame, "Thinking" + dots, (bx + 22, by + 34),
+                    font, 0.75, (0, 0, 0), 2)
+
+        # ── Filling progress bar ─────────────────────────────────────
+        bar_x = bx + 18
+        bar_y = by + 50
+        bar_w = bw - 36
+        bar_h = 16
+        # bar background
+        self._rounded_rect(frame, bar_x, bar_y,
+                            bar_x + bar_w, bar_y + bar_h,
+                            bar_h // 2, (210, 210, 210), -1)
+        # animated fill (bounces left to right)
+        fill_pct = 0.5 + 0.5 * math.sin(now * 3)
+        fill_w = max(bar_h, int(bar_w * fill_pct))
+        self._rounded_rect(frame, bar_x, bar_y,
+                            bar_x + fill_w, bar_y + bar_h,
+                            bar_h // 2, (180, 120, 255), -1)
+        # bar border
+        self._rounded_rect(frame, bar_x, bar_y,
+                            bar_x + bar_w, bar_y + bar_h,
+                            bar_h // 2, (0, 0, 0), 2)
+
+    # ─────────────────────────────────────────────────────────────────
+    # HUD: cartoon-style status, thought bubble, guess banner
+    # ─────────────────────────────────────────────────────────────────
     def _draw_info(self, frame):
-        """Draw redesigned HUD: pill status containers, AI overlay, guess banner."""
+        """Draw cartoon-style HUD elements."""
         now = time.time()
 
-        # ── Bottom-left pill: mode + instructions ─────────────────────
+        # ── Bottom-left cartoon pill: mode + shortcuts ────────────────
         mode_text = "DRAWING" if self.drawing_mode else "HOVER"
-        instructions = "G: AI Guess | S: Save | Q: Quit"
+        instructions = "G: Guess  S: Save  Q: Quit"
 
-        pill_h = 52
-        pill_w = 420
-        pill_x = 12
-        pill_y = self.frame_height - pill_h - 12
-        self._draw_pill(frame, pill_x, pill_y, pill_w, pill_h)
+        pill_w, pill_h = 370, 55
+        pill_x, pill_y = 14, self.frame_height - pill_h - 14
+        # shadow
+        self._rounded_rect(frame,
+                            pill_x + 4, pill_y + 4,
+                            pill_x + pill_w + 4, pill_y + pill_h + 4,
+                            pill_h // 2, (0, 0, 0), -1)
+        # fill
+        self._rounded_rect(frame, pill_x, pill_y,
+                            pill_x + pill_w, pill_y + pill_h,
+                            pill_h // 2, (40, 40, 40), -1)
+        self._rounded_rect(frame, pill_x, pill_y,
+                            pill_x + pill_w, pill_y + pill_h,
+                            pill_h // 2, (0, 0, 0), 2)
 
         mode_color = (0, 255, 0) if self.drawing_mode else (0, 255, 255)
-        cv2.putText(frame, mode_text, (pill_x + 18, pill_y + 20),
+        cv2.putText(frame, mode_text, (pill_x + 20, pill_y + 22),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.55, mode_color, 2)
-        cv2.putText(frame, instructions, (pill_x + 18, pill_y + 42),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.42, (200, 200, 200), 1)
+        cv2.putText(frame, instructions, (pill_x + 20, pill_y + 44),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.40, (200, 200, 200), 1)
 
-        # ── Bottom-right pill: FPS ────────────────────────────────────
+        # ── Bottom-right cartoon pill: FPS ────────────────────────────
         fps = 1 / (now - self.prev_time + 1e-6)
         self.prev_time = now
         fps_text = f"FPS: {int(fps)}"
-
-        fps_pill_w = 120
-        fps_pill_h = 34
-        fps_pill_x = self.frame_width - fps_pill_w - 12
-        fps_pill_y = self.frame_height - fps_pill_h - 12
-        self._draw_pill(frame, fps_pill_x, fps_pill_y, fps_pill_w, fps_pill_h)
-        cv2.putText(frame, fps_text, (fps_pill_x + 18, fps_pill_y + 24),
+        fp_w, fp_h = 115, 36
+        fp_x = self.frame_width - fp_w - 14
+        fp_y = self.frame_height - fp_h - 14
+        self._rounded_rect(frame, fp_x + 3, fp_y + 3,
+                            fp_x + fp_w + 3, fp_y + fp_h + 3,
+                            fp_h // 2, (0, 0, 0), -1)
+        self._rounded_rect(frame, fp_x, fp_y,
+                            fp_x + fp_w, fp_y + fp_h,
+                            fp_h // 2, (40, 40, 40), -1)
+        self._rounded_rect(frame, fp_x, fp_y,
+                            fp_x + fp_w, fp_y + fp_h,
+                            fp_h // 2, (0, 0, 0), 2)
+        cv2.putText(frame, fps_text, (fp_x + 16, fp_y + 26),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 0), 2)
 
-        # ── Pulsing "AI is Thinking…" overlay ─────────────────────────
+        # ── Thought bubble while AI is thinking ───────────────────────
         if self.ai_thinking:
-            alpha = 0.3 + 0.25 * (0.5 + 0.5 * math.sin(now * 4))
-            overlay = frame.copy()
-            cv2.rectangle(overlay, (0, 0),
-                          (self.frame_width, self.frame_height),
-                          (30, 0, 30), -1)
-            cv2.addWeighted(overlay, alpha, frame, 1 - alpha, 0, frame)
+            self._draw_thought_bubble(frame)
 
-            label = "AI is Thinking..."
-            font = cv2.FONT_HERSHEY_SIMPLEX
-            scale = 1.2
-            thickness = 3
-            (tw, th), _ = cv2.getTextSize(label, font, scale, thickness)
-            tx = (self.frame_width - tw) // 2
-            ty = (self.frame_height + th) // 2
-            # shadow
-            cv2.putText(frame, label, (tx + 2, ty + 2), font, scale, (0, 0, 0), thickness + 2)
-            cv2.putText(frame, label, (tx, ty), font, scale, (200, 130, 255), thickness)
-
-        # ── Rate limit message (if 429 error occurred)
+        # ── Rate-limit warning banner ─────────────────────────────────
         if self.rate_limit_message and (now - self.rate_limit_time) < 5.0:
             font = cv2.FONT_HERSHEY_SIMPLEX
-            scale = 0.9
-            thickness = 2
-            (tw, th), baseline = cv2.getTextSize(self.rate_limit_message, font, scale, thickness)
-            msg_w = tw + 40
-            msg_h = th + baseline + 24
-            mx = (self.frame_width - msg_w) // 2
-            my = 90  # below the colour buttons
-
-            overlay = frame.copy()
-            cv2.rectangle(overlay, (mx, my), (mx + msg_w, my + msg_h),
-                          (0, 0, 100), -1)
-            cv2.addWeighted(overlay, 0.85, frame, 1 - 0.85, 0, frame)
-
+            scale, thick = 0.8, 2
+            (tw, th), _ = cv2.getTextSize(self.rate_limit_message, font, scale, thick)
+            bw = tw + 50
+            bh = th + 30
+            bx = (self.frame_width - bw) // 2
+            by = BTN_TOP + BTN_H + 20
+            self._rounded_rect(frame, bx + 5, by + 5, bx + bw + 5, by + bh + 5,
+                                12, (0, 0, 0), -1)
+            self._rounded_rect(frame, bx, by, bx + bw, by + bh,
+                                12, (60, 40, 140), -1)
+            self._rounded_rect(frame, bx, by, bx + bw, by + bh,
+                                12, (0, 0, 0), 3)
             cv2.putText(frame, self.rate_limit_message,
-                        (mx + 20, my + th + 12),
-                        font, scale, (0, 150, 255), thickness)
+                        (bx + 25, by + th + 14),
+                        font, scale, (100, 180, 255), thick)
 
-        # ── Guess banner (top-centre, fades after GUESS_DISPLAY_SECONDS)
+        # ── Guess banner (cartoon speech bubble, fades) ───────────────
         if self.ai_guess_text and (now - self.ai_guess_time) < GUESS_DISPLAY_SECONDS:
             elapsed = now - self.ai_guess_time
-            # Fade: full opacity first 3 s, then fade out
             fade_start = GUESS_DISPLAY_SECONDS - 2
             if elapsed > fade_start:
                 banner_alpha = max(0.0, 1.0 - (elapsed - fade_start) / 2.0)
@@ -435,24 +567,39 @@ class SkySquiggle:
                 banner_alpha = 1.0
 
             font = cv2.FONT_HERSHEY_SIMPLEX
-            scale = 0.85
-            thickness = 2
-            (tw, th), baseline = cv2.getTextSize(self.ai_guess_text, font, scale, thickness)
-            banner_w = tw + 40
-            banner_h = th + baseline + 24
-            bx = (self.frame_width - banner_w) // 2
-            by = 90  # below the colour buttons
+            scale, thick = 0.85, 2
+            (tw, th), _ = cv2.getTextSize(self.ai_guess_text, font, scale, thick)
+            bw = tw + 50
+            bh = th + 36
+            bx = (self.frame_width - bw) // 2
+            by = BTN_TOP + BTN_H + 20
 
             overlay = frame.copy()
-            cv2.rectangle(overlay, (bx, by), (bx + banner_w, by + banner_h),
-                          (50, 30, 80), -1)
-            cv2.addWeighted(overlay, 0.75 * banner_alpha, frame,
-                            1 - 0.75 * banner_alpha, 0, frame)
+            # shadow
+            self._rounded_rect(overlay, bx + 5, by + 5, bx + bw + 5, by + bh + 5,
+                                14, (0, 0, 0), -1)
+            # bubble fill
+            self._rounded_rect(overlay, bx, by, bx + bw, by + bh,
+                                14, (255, 255, 255), -1)
+            # border
+            self._rounded_rect(overlay, bx, by, bx + bw, by + bh,
+                                14, (0, 0, 0), 3)
+            # small triangle pointer
+            tri_cx = bx + bw // 2
+            tri_pts = np.array([
+                [tri_cx - 12, by + bh],
+                [tri_cx + 12, by + bh],
+                [tri_cx, by + bh + 18],
+            ], dtype=np.int32)
+            cv2.fillPoly(overlay, [tri_pts], (255, 255, 255))
+            cv2.polylines(overlay, [tri_pts], True, (0, 0, 0), 3)
+            # text
+            cv2.putText(overlay, self.ai_guess_text,
+                        (bx + 25, by + th + 16),
+                        font, scale, (50, 30, 80), thick)
 
-            text_alpha_color = tuple(int(c * banner_alpha) for c in (255, 255, 255))
-            cv2.putText(frame, self.ai_guess_text,
-                        (bx + 20, by + th + 12),
-                        font, scale, text_alpha_color, thickness)
+            cv2.addWeighted(overlay, banner_alpha, frame,
+                            1 - banner_alpha, 0, frame)
 
     # ─────────────────────────────────────────────────────────────────
     # AI pipeline (runs on a background thread)
@@ -646,10 +793,23 @@ class SkySquiggle:
                         elapsed = time.time() - button_hover_timer[btn]
 
                         x1, y1, x2, y2 = self.buttons[btn]["pos"]
-                        progress_w = int((x2 - x1) * min(elapsed / hover_threshold, 1.0))
-                        cv2.rectangle(frame, (x1, y2 + 5),
-                                      (x1 + progress_w, y2 + 15),
-                                      (0, 255, 0), -1)
+                        pct = min(elapsed / hover_threshold, 1.0)
+                        bar_w = int((x2 - x1) * pct)
+                        bar_y = y2 + SHADOW_OFFSET + 6
+                        bar_h = 10
+                        # bar background
+                        self._rounded_rect(frame, x1, bar_y,
+                                            x2, bar_y + bar_h,
+                                            bar_h // 2, (80, 80, 80), -1)
+                        # bar fill
+                        if bar_w > bar_h:
+                            self._rounded_rect(frame, x1, bar_y,
+                                                x1 + bar_w, bar_y + bar_h,
+                                                bar_h // 2, (0, 255, 0), -1)
+                        # bar border
+                        self._rounded_rect(frame, x1, bar_y,
+                                            x2, bar_y + bar_h,
+                                            bar_h // 2, (0, 0, 0), 2)
 
                         if elapsed >= hover_threshold:
                             if btn == "Clear":
